@@ -100,10 +100,10 @@ export async function POST(request: NextRequest) {
       </html>
     `
 
-    // Send admin notification email
+    // Send admin notification email using Resend's sandbox domain
     const { data, error } = await resend.emails.send({
-      from: "Wholesale System <kristophardivine@gmail.com>",
-      to: ["kristophardivine@gmail.com"],
+      from: "Wholesale System <onboarding@resend.dev>", // Using Resend's verified sandbox domain
+      to: ["kristophardivine@gmail.com"], // Your admin email as recipient
       subject: `🚨 NEW ORDER #${order.id} - ₦${order.total_amount.toLocaleString()} from ${customer.business_name || customer.customer_company || customer.contact_name || customer.customer_name}`,
       html: adminEmailHTML,
     })

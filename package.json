@@ -69,5 +69,21 @@
     "postcss": "^8.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5"
-  }
+  },
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kamii-Samaa/Wholesale-Order-System.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Kamii-Samaa/Wholesale-Order-System/issues"
+  },
+  "homepage": "https://github.com/Kamii-Samaa/Wholesale-Order-System#readme",
+  "description": ""
 }

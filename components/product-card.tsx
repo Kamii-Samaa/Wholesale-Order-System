@@ -63,8 +63,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const [selectedSize, setSelectedSize] = useState<string>("")
 
   return (
-    <Card className="overflow-hidden">
-      <div className="aspect-square relative bg-gray-100">
+    <Card className="overflow-hidden hover:shadow-md transition-shadow">
+      <div className="aspect-square relative bg-gray-100 dark:bg-gray-800">
         {productGroup.image_url ? (
           <Image
             src={productGroup.image_url || "/placeholder.svg"}
@@ -74,40 +74,60 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             onError={(e) => {
               e.currentTarget.src = "/placeholder.svg"
             }}
+            sizes="(max-width: 640px) 33vw, (max-width: 1024px) 20vw, 16vw"
           />
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400">No Image</div>
+          <div className="flex items-center justify-center h-full text-gray-400">
+            <div className="text-center">
+              <div className="text-lg mb-1">📦</div>
+              <div className="text-xs">No Image</div>
+            </div>
+          </div>
         )}
       </div>
-      <CardContent className="p-4">
-        <div className="space-y-2">
-          <div className="flex justify-between items-start">
-            <Badge variant="outline">{productGroup.reference}</Badge>
-            {productGroup.brand && <Badge variant="secondary">{productGroup.brand}</Badge>}
+      <CardContent className="p-2">
+        <div className="space-y-1">
+          <div className="flex justify-between items-start gap-1">
+            <Badge variant="outline" className="text-xs px-1 py-0 h-4">
+              {productGroup.reference}
+            </Badge>
+            {productGroup.brand && (
+              <Badge variant="secondary" className="text-xs px-1 py-0 h-4">
+                {productGroup.brand}
+              </Badge>
+            )}
           </div>
-          <h3 className="font-medium text-sm line-clamp-2">{productGroup.description}</h3>
-          <div className="text-xs text-gray-500">
-            {productGroup.section} • {productGroup.product_line}
-          </div>
+
+          <h3 className="font-medium text-xs line-clamp-2 min-h-[2rem] leading-tight">{productGroup.description}</h3>
+
+          {productGroup.section && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{productGroup.section}</div>
+          )}
+
           <div className="flex justify-between items-center">
             <div>
-              <div className="text-lg font-bold text-green-600">₦{productGroup.wholesale_price?.toLocaleString()}</div>
+              <div className="text-sm font-bold text-green-600 dark:text-green-400">
+                ₦{productGroup.wholesale_price?.toLocaleString()}
+              </div>
               {productGroup.retail_price && (
                 <div className="text-xs text-gray-500 line-through">₦{productGroup.retail_price?.toLocaleString()}</div>
               )}
             </div>
-            <div className="text-xs">
-              <div>Total Stock: {availableStock}</div>
-              {cartQuantity > 0 && <div className="text-blue-600">In Cart: {cartQuantity}</div>}
+            <div className="text-xs text-right">
+              <div
+                className={availableStock > 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
+              >
+                {availableStock}
+              </div>
+              {cartQuantity > 0 && <div className="text-blue-600 dark:text-blue-400 text-xs">Cart: {cartQuantity}</div>}
             </div>
           </div>
 
           {/* Size Selection */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium">Select Size:</label>
+          <div className="space-y-1">
             <Select value={selectedSize} onValueChange={setSelectedSize}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Choose size..." />
+              <SelectTrigger className="w-full h-6 text-xs">
+                <SelectValue placeholder="Size..." />
               </SelectTrigger>
               <SelectContent>
                 {productGroup.variants.map((variant) => (
@@ -116,15 +136,22 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                     value={variant.size || ""}
                     disabled={variant.stock - (variant.reserved_stock || 0) <= 0}
                   >
-                    {variant.size} ({variant.stock - (variant.reserved_stock || 0)} available)
+                    <span className="text-xs">
+                      {variant.size} ({variant.stock - (variant.reserved_stock || 0)})
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <Button onClick={() => onAddToCart(selectedSize)} disabled={!selectedSize} className="w-full" size="sm">
-            {selectedSize ? "Add to Cart" : "Select Size"}
+          <Button
+            onClick={() => onAddToCart(selectedSize)}
+            disabled={!selectedSize || availableStock === 0}
+            className="w-full h-6 text-xs"
+            size="sm"
+          >
+            {selectedSize ? "Add" : "Select Size"}
           </Button>
         </div>
       </CardContent>

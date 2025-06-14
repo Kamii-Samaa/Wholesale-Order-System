@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { EnvDiagnostic } from "@/components/env-diagnostic"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 interface Product {
   id: number
@@ -99,7 +100,7 @@ export default function WholesaleOrderSystem() {
     brands: [],
     sections: [],
     productLines: [],
-    priceRange: { min: 0, max: 1000000 },
+    priceRange: { min: 0, max: 0 },
     inStockOnly: false,
   })
 
@@ -481,13 +482,13 @@ export default function WholesaleOrderSystem() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b sticky top-0 z-40">
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
-              <h1 className="text-xl lg:text-2xl font-bold text-gray-900">Wholesale Portal</h1>
+              <h1 className="text-xl lg:text-2xl font-bold text-gray-900 dark:text-gray-100">Wholesale Portal</h1>
 
               {/* Mobile Filter Button */}
               <Sheet open={showMobileFilters} onOpenChange={setShowMobileFilters}>
@@ -523,23 +524,21 @@ export default function WholesaleOrderSystem() {
             </div>
 
             <div className="flex items-center gap-2">
-              <a href="/admin" className="text-sm text-gray-600 hover:text-gray-900 underline hidden sm:block">
-                Admin Panel
-              </a>
+              <ThemeToggle />
 
               {/* Cart Button */}
+              <Button onClick={() => setShowMobileCart(true)} className="relative">
+                <ShoppingCart className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Cart</span> ({cart.length})
+                {cart.length > 0 && (
+                  <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center">
+                    {cart.reduce((sum, item) => sum + item.quantity, 0)}
+                  </Badge>
+                )}
+              </Button>
+
+              {/* Cart Sheet */}
               <Sheet open={showMobileCart} onOpenChange={setShowMobileCart}>
-                <SheetTrigger asChild>
-                  <Button className="relative">
-                    <ShoppingCart className="h-4 w-4 mr-2" />
-                    <span className="hidden sm:inline">Cart</span> ({cart.length})
-                    {cart.length > 0 && (
-                      <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center">
-                        {cart.reduce((sum, item) => sum + item.quantity, 0)}
-                      </Badge>
-                    )}
-                  </Button>
-                </SheetTrigger>
                 <SheetContent side="right" className="w-full sm:w-96">
                   <SheetHeader>
                     <SheetTitle>Shopping Cart ({cart.length})</SheetTitle>
@@ -678,7 +677,7 @@ export default function WholesaleOrderSystem() {
               </Card>
             ) : (
               <>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3 lg:gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 lg:gap-4">
                   {paginatedGroups.map((group) => (
                     <ProductCard key={group.reference} group={group} onAddToCart={addToCart} cart={cart} />
                   ))}
@@ -829,8 +828,8 @@ function FilterContent({
           <div className="flex gap-2">
             <Input
               type="number"
-              placeholder="Min"
-              value={filters.priceRange.min}
+              placeholder="Min Price"
+              value={filters.priceRange.min === 0 ? "" : filters.priceRange.min}
               onChange={(e) =>
                 setFilters((prev: any) => ({
                   ...prev,
@@ -840,8 +839,8 @@ function FilterContent({
             />
             <Input
               type="number"
-              placeholder="Max"
-              value={filters.priceRange.max}
+              placeholder="Max Price"
+              value={filters.priceRange.max === 1000000 ? "" : filters.priceRange.max}
               onChange={(e) =>
                 setFilters((prev: any) => ({
                   ...prev,
@@ -976,8 +975,20 @@ function ProductCard({
               )}
             </div>
             <div className="text-xs text-right">
-              <div className={getTotalStock() > 0 ? "text-green-600" : "text-red-600"}>Stock: {getTotalStock()}</div>
-              {getCartQuantity() > 0 && <div className="text-blue-600">In Cart: {getCartQuantity()}</div>}
+              <div
+                className={
+                  getTotalStock() > 0
+                    ? "text-green-600 dark:text-green-400 font-bold text-sm lg:text-base"
+                    : "text-red-600 dark:text-red-400 font-bold text-sm lg:text-base"
+                }
+              >
+                Stock: {getTotalStock()}
+              </div>
+              {getCartQuantity() > 0 && (
+                <div className="text-blue-600 dark:text-blue-400 font-semibold text-xs lg:text-sm">
+                  In Cart: {getCartQuantity()}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1003,7 +1014,7 @@ function ProductCard({
           {/* Quantity Selection - Show when size is selected or single variant */}
           {(selectedSize || !hasMultipleSizes) && maxQuantity > 0 && (
             <div className="space-y-1">
-              <Label className="text-xs font-medium">Quantity:</Label>
+              <Label className="text-xs font-medium text-gray-900 dark:text-gray-100">Quantity:</Label>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
@@ -1022,7 +1033,7 @@ function ProductCard({
                   value={quantityInput}
                   onChange={(e) => handleQuantityInputChange(e.target.value)}
                   onBlur={handleQuantityBlur}
-                  className="h-8 text-center text-sm flex-1 min-w-0"
+                  className="h-8 text-center text-sm flex-1 min-w-0 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                   min="1"
                   max={maxQuantity}
                 />
@@ -1040,7 +1051,7 @@ function ProductCard({
                   <Plus className="h-3 w-3" />
                 </Button>
               </div>
-              <div className="text-xs text-gray-500">Max: {maxQuantity} units</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Max: {maxQuantity} units</div>
             </div>
           )}
 
