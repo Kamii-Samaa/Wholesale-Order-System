@@ -25,8 +25,24 @@
 Add to your `.env.local` file:
 
 \`\`\`env
+# Resend API Key (mandatory for sending emails)
 RESEND_API_KEY=re_your_actual_api_key_here
+
+# Application URL (used for links in emails, e.g., to admin panel)
+# For local development, usually http://localhost:3000
+# For production, your actual deployed application URL
 NEXT_PUBLIC_APP_URL=https://your-domain.com
+
+# Email Configuration (optional, but recommended for production)
+
+# The "From" address for emails sent via Resend.
+# If not set, API routes will default to "Wholesale System <onboarding@resend.dev>".
+# For production, it's highly recommended to use a custom domain verified with Resend (e.g., "noreply@yourdomain.com").
+RESEND_FROM_EMAIL="Wholesale System <noreply@yourdomain.com>"
+
+# The email address that receives admin notifications for new orders.
+# This is mandatory for admin notifications to be sent.
+ADMIN_EMAIL_RECIPIENT="your_admin_email@example.com"
 \`\`\`
 
 ## 5. Install Dependencies
@@ -43,7 +59,7 @@ npm install resend
 2. Place a test order
 3. Check your email inbox for:
    - Customer confirmation email
-   - Admin notification email (to kristophardivine@gmail.com)
+   - Admin notification email (to the email address specified in ADMIN_EMAIL_RECIPIENT)
 
 ## 7. Email Limits
 

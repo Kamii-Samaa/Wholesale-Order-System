@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,9 +23,17 @@ import Image from "next/image"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert" // Added AlertTitle
 import { EnvDiagnostic } from "@/components/env-diagnostic"
 import { ThemeToggle } from "@/components/theme-toggle"
+// Ensure CustomerInfo is imported from the hook if defined there, or defined locally if not.
+// For this task, CustomerInfo from useShoppingCart is used.
+import { useShoppingCart, CartItem as HookCartItem, ProductVariant, CustomerInfo as HookCustomerInfo } from "@/lib/hooks/useShoppingCart"
+import { useProductFilters, Filters as HookFilters, FilterOptions as HookFilterOptions } from "@/lib/hooks/useProductFilters"
+
+// Keep existing local type definitions if they are more detailed or used by UI components directly
+// OR ensure hook types are comprehensive and use them. For this refactor, we'll use hook types where possible.
+// The task mentions Product, ProductGroup can remain, CartItem and Filters will be effectively replaced by hook imports.
 
 interface Product {
   id: number
@@ -51,66 +59,89 @@ interface ProductGroup {
   description: string | null
   image_url: string | null
   retail_price: number | null
-  wholesale_price: number | null
+  wholesale_price: number | null // This is group level, variant prices are on Product
   variants: Product[]
 }
 
-interface CartItem {
-  productId: number
-  reference: string
-  size: string
-  description: string
-  wholesale_price: number
-  quantity: number
-  stock: number
-}
-
-interface Filters {
-  brands: string[]
-  sections: string[]
-  productLines: string[]
-  priceRange: { min: number; max: number }
-  inStockOnly: boolean
-}
+// CartItem is now imported as HookCartItem from useShoppingCart
+// Filters is now imported as HookFilters from useProductFilters
 
 const PRODUCTS_PER_PAGE = 50
 
+// Define Prop Types as requested
+// Use HookCustomerInfo for consistency if it's exported from the hook
+interface MiniCartProps {
+  cart: HookCartItem[];
+  customerInfo: HookCustomerInfo; // Using type from hook
+  setCustomerInfo: React.Dispatch<React.SetStateAction<HookCustomerInfo>>;
+  updateQuantity: (productId: number, newQuantity: number) => void;
+  getTotalAmount: () => number;
+  submitOrder: () => Promise<void>; // Or appropriate return type
+  clearCart: () => void; // Added from useShoppingCart
+}
+
+interface FilterContentProps {
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
+  filters: HookFilters;
+  // setFilters: React.Dispatch<React.SetStateAction<HookFilters>>; // Provided by useProductFilters hook directly
+  filterOptions: HookFilterOptions;
+  toggleFilter: (type: keyof Pick<HookFilters, 'brands' | 'sections' | 'productLines'>, value: string) => void;
+  clearFilters: () => void;
+  getActiveFiltersCount: () => number;
+  updatePriceRange: (min: number, max: number) => void; // Added from useProductFilters hook
+  toggleInStockOnly: () => void; // Added from useProductFilters hook
+}
+
+/**
+ * @component WholesaleOrderSystem
+ * @description The main page component for the wholesale ordering system.
+ * It handles product display, filtering, cart management, and order submission.
+ */
 export default function WholesaleOrderSystem() {
   const [products, setProducts] = useState<Product[]>([])
   const [productGroups, setProductGroups] = useState<ProductGroup[]>([])
   const [filteredGroups, setFilteredGroups] = useState<ProductGroup[]>([])
   const [paginatedGroups, setPaginatedGroups] = useState<ProductGroup[]>([])
   const [currentPage, setCurrentPage] = useState(1)
-  const [cart, setCart] = useState<CartItem[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showMobileCart, setShowMobileCart] = useState(false)
   const [showMobileFilters, setShowMobileFilters] = useState(false)
   const [showDiagnostic, setShowDiagnostic] = useState(false)
-  const [customerInfo, setCustomerInfo] = useState({
+  const [customerInfo, setCustomerInfo] = useState<HookCustomerInfo>({ // Using type from hook
     name: "",
     email: "",
     company: "",
     phone: "",
   })
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
-  // Filter states
-  const [filters, setFilters] = useState<Filters>({
-    brands: [],
-    sections: [],
-    productLines: [],
-    priceRange: { min: 0, max: 0 },
-    inStockOnly: false,
-  })
 
-  // Available filter options
-  const [filterOptions, setFilterOptions] = useState({
-    brands: [] as string[],
-    sections: [] as string[],
-    productLines: [] as string[],
-    priceRange: { min: 0, max: 1000000 },
-  })
+  // Initialize hooks
+  const {
+    cart,
+    // setCart: setCartHook, // Not used directly now
+    addToCart: addToCartHook,
+    updateQuantity: updateQuantityHook,
+    getTotalAmount: getTotalAmountHook,
+    clearCart,
+    submitOrderToSupabase // Added this function from the hook
+  } = useShoppingCart();
+
+  const {
+    filters,
+    setFilters: setFiltersHook, // Renaming to avoid conflict
+    filterOptions,
+    setFilterOptions: setFilterOptionsHook,
+    toggleFilter: toggleFilterHook,
+    clearFilters: clearFiltersHook,
+    getActiveFiltersCount: getActiveFiltersCountHook,
+    updatePriceRange,
+    toggleInStockOnly
+  } = useProductFilters();
+
 
   const [supabase, setSupabase] = useState<any>(null)
 
@@ -133,92 +164,21 @@ export default function WholesaleOrderSystem() {
     if (supabase) {
       fetchProducts()
     }
-  }, [supabase])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase]) // fetchProducts is stable due to useCallback or being defined outside
 
-  useEffect(() => {
-    applyFilters()
-  }, [productGroups, searchTerm, filters])
+  /**
+   * @function getAvailableStock
+   * @description Calculates the available stock for a product variant.
+   * @param {Product} variant - The product variant.
+   * @returns {number} The available stock.
+   */
+  const getAvailableStock = useCallback((variant: Product) => {
+    return Math.max(0, variant.stock - (variant.reserved_stock || 0));
+  }, []);
 
-  useEffect(() => {
-    applyPagination()
-  }, [filteredGroups, currentPage])
-
-  const fetchProducts = async () => {
-    if (!supabase) return
-
-    try {
-      setError(null)
-      const { data, error: fetchError } = await supabase.from("products").select("*").order("reference")
-
-      if (fetchError) {
-        console.error("Database error:", fetchError)
-        throw new Error(`Database error: ${fetchError.message}`)
-      }
-
-      setProducts(data || [])
-
-      // Group products by reference
-      const groups = groupProductsByReference(data || [])
-      setProductGroups(groups)
-
-      // Extract filter options
-      extractFilterOptions(data || [])
-    } catch (err: any) {
-      console.error("Error fetching products:", err)
-      setError(`Failed to load products: ${err.message}`)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const groupProductsByReference = (products: Product[]): ProductGroup[] => {
-    const groupMap = new Map<string, ProductGroup>()
-
-    products.forEach((product) => {
-      const key = product.reference
-      if (!groupMap.has(key)) {
-        groupMap.set(key, {
-          reference: product.reference,
-          brand: product.brand,
-          section: product.section,
-          product_line: product.product_line,
-          description: product.description,
-          image_url: product.image_url,
-          retail_price: product.retail_price,
-          wholesale_price: product.wholesale_price,
-          variants: [],
-        })
-      }
-      groupMap.get(key)!.variants.push(product)
-    })
-
-    return Array.from(groupMap.values())
-  }
-
-  const extractFilterOptions = (products: Product[]) => {
-    const brands = [...new Set(products.map((p) => p.brand).filter(Boolean))] as string[]
-    const sections = [...new Set(products.map((p) => p.section).filter(Boolean))] as string[]
-    const productLines = [...new Set(products.map((p) => p.product_line).filter(Boolean))] as string[]
-
-    const prices = products.map((p) => p.wholesale_price).filter(Boolean) as number[]
-    const minPrice = Math.min(...prices, 0)
-    const maxPrice = Math.max(...prices, 1000000)
-
-    setFilterOptions({
-      brands: brands.sort(),
-      sections: sections.sort(),
-      productLines: productLines.sort(),
-      priceRange: { min: minPrice, max: maxPrice },
-    })
-
-    // Initialize filter price range
-    setFilters((prev) => ({
-      ...prev,
-      priceRange: { min: minPrice, max: maxPrice },
-    }))
-  }
-
-  const applyFilters = () => {
+  // applyFilters is now a callback, depends on filters from the hook
+  const applyFilters = useCallback(() => {
     let filtered = productGroups
 
     // Search filter
@@ -250,6 +210,7 @@ export default function WholesaleOrderSystem() {
 
     // Price filter
     filtered = filtered.filter((group) => {
+      // Use group.wholesale_price which is ProductGroup level, or iterate variants if needed
       const price = group.wholesale_price || 0
       return price >= filters.priceRange.min && price <= filters.priceRange.max
     })
@@ -261,142 +222,190 @@ export default function WholesaleOrderSystem() {
 
     setFilteredGroups(filtered)
     setCurrentPage(1) // Reset to first page when filters change
+  }, [productGroups, searchTerm, filters, getAvailableStock]);
+
+
+  useEffect(() => {
+    applyFilters()
+  }, [applyFilters])
+
+  const applyPagination = useCallback(() => {
+    const startIndex = (currentPage - 1) * PRODUCTS_PER_PAGE;
+    const endIndex = startIndex + PRODUCTS_PER_PAGE;
+    setPaginatedGroups(filteredGroups.slice(startIndex, endIndex));
+  }, [filteredGroups, currentPage]);
+
+  useEffect(() => {
+    applyPagination()
+  }, [applyPagination]) // filteredGroups and currentPage are dependencies of applyPagination
+
+  /**
+   * @function fetchProducts
+   * @description Fetches products from the Supabase database, groups them, and extracts filter options.
+   * Handles loading states and errors.
+   */
+  const fetchProducts = useCallback(async () => {
+    if (!supabase) return
+
+    try {
+      setError(null)
+      const { data, error: fetchError } = await supabase.from("products").select("*").order("reference")
+
+      if (fetchError) {
+        console.error("Database error:", fetchError)
+        throw new Error(`Database error: ${fetchError.message}`)
+      }
+
+      setProducts(data || [])
+
+      // Group products by reference
+      const groups = groupProductsByReference(data || [])
+      setProductGroups(groups)
+
+      // Extract filter options and set them in the hook
+      extractAndSetFilterOptions(data || [])
+    } catch (err: any) {
+      console.error("Error fetching products:", err)
+      setError(`Failed to load products: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [supabase, setProducts, setProductGroups, setFilterOptionsHook, setFiltersHook, setError, setLoading]); // Added dependencies
+
+  /**
+   * @function groupProductsByReference
+   * @description Groups an array of products by their reference property.
+   * Each group contains variants of the same product.
+   * @param {Product[]} productsArray - The array of products to group.
+   * @returns {ProductGroup[]} An array of product groups.
+   */
+  const groupProductsByReference = (productsArray: Product[]): ProductGroup[] => {
+    const groupMap = new Map<string, ProductGroup>()
+
+    productsArray.forEach((product) => {
+      const key = product.reference
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          reference: product.reference,
+          brand: product.brand,
+          section: product.section,
+          product_line: product.product_line,
+          description: product.description,
+          image_url: product.image_url,
+          retail_price: product.retail_price,
+          wholesale_price: product.wholesale_price,
+          variants: [],
+        })
+      }
+      groupMap.get(key)!.variants.push(product)
+    })
+
+    return Array.from(groupMap.values())
   }
 
-  const applyPagination = () => {
-    const startIndex = (currentPage - 1) * PRODUCTS_PER_PAGE
-    const endIndex = startIndex + PRODUCTS_PER_PAGE
-    setPaginatedGroups(filteredGroups.slice(startIndex, endIndex))
-  }
+  /**
+   * @function extractAndSetFilterOptions
+   * @description Extracts available filter options (brands, sections, product lines, price range)
+   * from the fetched products and updates the filter state using hooks.
+   * @param {Product[]} fetchedProds - The array of fetched products.
+   */
+  const extractAndSetFilterOptions = useCallback((fetchedProds: Product[]) => {
+    const brands = [...new Set(fetchedProds.map((p) => p.brand).filter(Boolean))] as string[]
+    const sections = [...new Set(fetchedProds.map((p) => p.section).filter(Boolean))] as string[]
+    const productLines = [...new Set(fetchedProducts.map((p) => p.product_line).filter(Boolean))] as string[]
+
+    const prices = fetchedProducts.map((p) => p.wholesale_price).filter(Boolean) as number[]
+    // Handle case where prices array might be empty
+    const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+    const maxPrice = prices.length > 0 ? Math.max(...prices) : 1000000;
+
+    const newFilterOptions: HookFilterOptions = {
+      brands: brands.sort(),
+      sections: sections.sort(),
+      productLines: productLines.sort(),
+      priceRange: { min: minPrice, max: maxPrice },
+    };
+    setFilterOptionsHook(newFilterOptions);
+
+    // Initialize filter price range using setFiltersHook from the hook
+    setFiltersHook((prev) => ({ // This setFiltersHook is from useProductFilters
+      ...prev,
+      priceRange: { min: minPrice, max: maxPrice },
+    }));
+  }, [setFilterOptionsHook, setFiltersHook]); // Added dependencies
 
   const totalPages = Math.ceil(filteredGroups.length / PRODUCTS_PER_PAGE)
 
-  const toggleFilter = (type: keyof Filters, value: string) => {
-    setFilters((prev) => {
-      const currentArray = prev[type] as string[]
-      const newArray = currentArray.includes(value)
-        ? currentArray.filter((item) => item !== value)
-        : [...currentArray, value]
-
-      return { ...prev, [type]: newArray }
-    })
-  }
-
-  const clearFilters = () => {
-    setFilters({
-      brands: [],
-      sections: [],
-      productLines: [],
-      priceRange: filterOptions.priceRange,
-      inStockOnly: false,
-    })
-  }
-
-  const addToCart = (productGroup: ProductGroup, selectedSize: string, quantity: number) => {
-    const variant = productGroup.variants.find((v) => v.size === selectedSize)
+  /**
+   * @function handleAddToCart
+   * @description Bridge function to handle adding products to the cart.
+   * It finds the correct product variant and calls the `addToCartHook` from `useShoppingCart`.
+   * Sets notifications for errors or success.
+   * @param {ProductGroup} productGroup - The product group containing the variant to add.
+   * @param {string} selectedSize - The size of the variant to add.
+   * @param {number} quantity - The quantity to add.
+   */
+  const handleAddToCart = (productGroup: ProductGroup, selectedSize: string, quantity: number) => {
+    const variant = productGroup.variants.find((v) => v.size === selectedSize);
     if (!variant) {
-      alert("Please select a valid size")
-      return
+      setNotification({ type: 'error', message: 'Selected product variant not found.' });
+      return;
     }
 
-    const availableStock = variant.stock - (variant.reserved_stock || 0)
-    const currentCartQuantity = cart.find((item) => item.productId === variant.id)?.quantity || 0
+    const variantForCart: ProductVariant = {
+        id: variant.id,
+        reference: variant.reference,
+        size: variant.size || "",
+        description: variant.description || "",
+        wholesale_price: variant.wholesale_price || 0,
+        stock: variant.stock,
+        reserved_stock: variant.reserved_stock
+    };
 
-    if (currentCartQuantity + quantity > availableStock) {
-      alert(`Not enough stock available. Only ${availableStock - currentCartQuantity} units remaining.`)
-      return
+    const result = addToCartHook(variantForCart, quantity);
+    if (!result.success && result.message) {
+      setNotification({ type: 'error', message: result.message });
+    } else if (result.success) {
+      // Optionally, show a success message for adding to cart
+      // setNotification({ type: 'success', message: `${variant.description || 'Item'} added to cart.`});
+      // Auto-clear this type of notification after a short delay
+      // setTimeout(() => setNotification(null), 3000);
     }
+  };
 
-    setCart((prev) => {
-      const existing = prev.find((item) => item.productId === variant.id)
-      if (existing) {
-        return prev.map((item) =>
-          item.productId === variant.id
-            ? { ...item, quantity: Math.min(item.quantity + quantity, availableStock) }
-            : item,
-        )
-      }
-      return [
-        ...prev,
-        {
-          productId: variant.id,
-          reference: variant.reference,
-          size: variant.size || "",
-          description: variant.description || "",
-          wholesale_price: variant.wholesale_price || 0,
-          quantity: quantity,
-          stock: variant.stock,
-        },
-      ]
-    })
-  }
-
-  const updateQuantity = (productId: number, newQuantity: number) => {
-    if (newQuantity === 0) {
-      setCart((prev) => prev.filter((item) => item.productId !== productId))
-    } else {
-      setCart((prev) => prev.map((item) => (item.productId === productId ? { ...item, quantity: newQuantity } : item)))
-    }
-  }
-
-  const getTotalAmount = () => {
-    return cart.reduce((total, item) => total + item.wholesale_price * item.quantity, 0)
-  }
-
+  /**
+   * @function submitOrder
+   * @description Orchestrates the order submission process.
+   * It calls the `submitOrderToSupabase` hook function, then handles email notifications.
+   * Sets notifications for various stages and outcomes.
+   */
   const submitOrder = async () => {
-    if (!customerInfo.name || !customerInfo.email || cart.length === 0) {
-      alert("Please fill in customer information and add items to cart")
-      return
-    }
-
+    // Validation is now primarily in the hook, but initial check for supabase client can remain.
     if (!supabase) {
-      alert("Database connection not available")
-      return
+      setNotification({ type: 'error', message: 'Database connection not available. Please try again later.' });
+      return;
     }
 
+    // Call the hook's submission function
+    const submissionResult = await submitOrderToSupabase(supabase, customerInfo);
+
+    if (!submissionResult.success || !submissionResult.orderData) {
+      setNotification({ type: 'error', message: submissionResult.message || "An unknown error occurred while submitting the order." });
+      return;
+    }
+
+    // If Supabase submission is successful, proceed with email notifications
     try {
-      // Create order
-      const { data: orderData, error: orderError } = await supabase
-        .from("orders")
-        .insert({
-          customer_name: customerInfo.name,
-          customer_email: customerInfo.email,
-          customer_company: customerInfo.company,
-          customer_phone: customerInfo.phone,
-          total_amount: getTotalAmount(),
-          status: "pending",
-        })
-        .select()
-        .single()
-
-      if (orderError) throw orderError
-
-      // Create order items
-      const orderItems = cart.map((item) => ({
-        order_id: orderData.id,
-        product_id: item.productId,
-        quantity: item.quantity,
-        unit_price: item.wholesale_price,
-        total_price: item.wholesale_price * item.quantity,
-      }))
-
-      const { error: itemsError } = await supabase.from("order_items").insert(orderItems)
-
-      if (itemsError) throw itemsError
+      const { orderData } = submissionResult;
 
       // Send customer confirmation email
-      await fetch("/api/send-customer-confirmation", {
+      const emailResponse = await fetch("/api/send-customer-confirmation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           order: orderData,
-          customer: {
-            customer_name: customerInfo.name,
-            customer_email: customerInfo.email,
-            customer_company: customerInfo.company,
-            customer_phone: customerInfo.phone,
-          },
-          items: cart.map((item) => ({
+          customer: customerInfo, // Send the full customerInfo from page state
+          items: cart.map((item) => ({ // Map cart items for email
             description: item.description,
             reference: item.reference,
             size: item.size,
@@ -404,26 +413,48 @@ export default function WholesaleOrderSystem() {
             wholesale_price: item.wholesale_price,
           })),
         }),
-      })
+      });
 
-      alert("Order submitted successfully!")
-      setCart([])
-      setCustomerInfo({ name: "", email: "", company: "", phone: "" })
-      setShowMobileCart(false)
-      fetchProducts() // Refresh products to show updated stock
-    } catch (error) {
-      console.error("Error submitting order:", error)
-      alert("Error submitting order. Please try again.")
+      if (!emailResponse.ok) {
+        // Log the error and inform user, but order is still submitted
+        console.error("Failed to send customer confirmation email:", await emailResponse.text());
+        setNotification({ type: 'error', message: 'Order submitted, but failed to send confirmation email. Please contact support if you do not receive it shortly.' });
+      } else {
+        setNotification({ type: 'success', message: 'Order submitted successfully! A confirmation email has been sent.' });
+      }
+
+      // Also attempt to send admin notification (could be done in parallel or sequentially)
+       await fetch("/api/send-order-notification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          order: orderData,
+          customer: customerInfo,
+          items: cart.map(item => ({
+            description: item.description,
+            reference: item.reference,
+            size: item.size,
+            quantity: item.quantity,
+            wholesale_price: item.wholesale_price,
+          })),
+        }),
+      });
+      // Not handling admin notification failure explicitly to the user here, assumed to be an internal process.
+
+      clearCart();
+      setCustomerInfo({ name: "", email: "", company: "", phone: "" }); // Reset customer info
+      setShowMobileCart(false);
+      fetchProducts(); // Refresh product stock
+
+    } catch (apiError: any) {
+      // This catch is for errors during the fetch calls for emails or other post-Supabase logic
+      console.error("Error during post-order processing (e.g., sending emails):", apiError);
+      setNotification({ type: 'error', message: `Order submitted, but encountered an issue with post-order processing: ${apiError.message}` });
     }
-  }
+  };
 
-  const getAvailableStock = (variant: Product) => {
-    return Math.max(0, variant.stock - (variant.reserved_stock || 0))
-  }
-
-  const getActiveFiltersCount = () => {
-    return filters.brands.length + filters.sections.length + filters.productLines.length + (filters.inStockOnly ? 1 : 0)
-  }
+  // getAvailableStock is wrapped in useCallback above.
+  // getActiveFiltersCount is from useProductFilters hook (getActiveFiltersCountHook)
 
   // Show error state if Supabase initialization failed
   if (error) {
@@ -482,7 +513,27 @@ export default function WholesaleOrderSystem() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 relative"> {/* Added relative for potential fixed alert positioning context */}
+      {/* Notification Area */}
+      {notification && (
+        <div className="fixed top-4 right-4 z-50 w-full max-w-sm">
+          <Alert variant={notification.type === 'error' ? 'destructive' : 'default'} className="shadow-lg">
+            <AlertCircle className="h-5 w-5" />
+            <AlertTitle>{notification.type === 'error' ? 'Error' : 'Success'}</AlertTitle>
+            <AlertDescription>
+              {notification.message}
+            </AlertDescription>
+            <button
+              onClick={() => setNotification(null)}
+              className="absolute top-2 right-2 p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"
+              aria-label="Close notification"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </Alert>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -496,9 +547,9 @@ export default function WholesaleOrderSystem() {
                   <Button variant="outline" size="sm" className="lg:hidden">
                     <Menu className="h-4 w-4 mr-2" />
                     Filters
-                    {getActiveFiltersCount() > 0 && (
+                    {getActiveFiltersCountHook() > 0 && (
                       <Badge variant="secondary" className="ml-2">
-                        {getActiveFiltersCount()}
+                        {getActiveFiltersCountHook()}
                       </Badge>
                     )}
                   </Button>
@@ -511,12 +562,14 @@ export default function WholesaleOrderSystem() {
                     <FilterContent
                       searchTerm={searchTerm}
                       setSearchTerm={setSearchTerm}
-                      filters={filters}
-                      setFilters={setFilters}
-                      filterOptions={filterOptions}
-                      toggleFilter={toggleFilter}
-                      clearFilters={clearFilters}
-                      getActiveFiltersCount={getActiveFiltersCount}
+                      filters={filters} // from hook
+                      // setFilters is managed by hook, specific setters like updatePriceRange, toggleInStockOnly are passed
+                      filterOptions={filterOptions} // from hook
+                      toggleFilter={toggleFilterHook} // from hook
+                      clearFilters={clearFiltersHook} // from hook
+                      getActiveFiltersCount={getActiveFiltersCountHook} // from hook
+                      updatePriceRange={updatePriceRange} // from hook
+                      toggleInStockOnly={toggleInStockOnly} // from hook
                     />
                   </div>
                 </SheetContent>
@@ -545,12 +598,13 @@ export default function WholesaleOrderSystem() {
                   </SheetHeader>
                   <div className="mt-6">
                     <MiniCart
-                      cart={cart}
+                      cart={cart} // from hook
                       customerInfo={customerInfo}
                       setCustomerInfo={setCustomerInfo}
-                      updateQuantity={updateQuantity}
-                      getTotalAmount={getTotalAmount}
+                      updateQuantity={updateQuantityHook} // from hook
+                      getTotalAmount={getTotalAmountHook} // from hook
                       submitOrder={submitOrder}
+                      clearCart={clearCart} // from hook
                     />
                   </div>
                 </SheetContent>
@@ -563,12 +617,13 @@ export default function WholesaleOrderSystem() {
       {/* Desktop Sticky Cart */}
       <div className="hidden xl:block fixed top-20 right-4 w-80 z-30">
         <MiniCart
-          cart={cart}
+                      cart={cart} // from hook
           customerInfo={customerInfo}
           setCustomerInfo={setCustomerInfo}
-          updateQuantity={updateQuantity}
-          getTotalAmount={getTotalAmount}
+                      updateQuantity={updateQuantityHook} // from hook
+                      getTotalAmount={getTotalAmountHook} // from hook
           submitOrder={submitOrder}
+                      clearCart={clearCart} // from hook
         />
       </div>
 
@@ -600,10 +655,10 @@ export default function WholesaleOrderSystem() {
                   <CardTitle className="flex items-center gap-2">
                     <Filter className="h-4 w-4" />
                     Filters
-                    {getActiveFiltersCount() > 0 && <Badge variant="secondary">{getActiveFiltersCount()}</Badge>}
+                    {getActiveFiltersCountHook() > 0 && <Badge variant="secondary">{getActiveFiltersCountHook()}</Badge>}
                   </CardTitle>
-                  {getActiveFiltersCount() > 0 && (
-                    <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  {getActiveFiltersCountHook() > 0 && (
+                    <Button variant="ghost" size="sm" onClick={clearFiltersHook}>
                       <X className="h-4 w-4" />
                     </Button>
                   )}
@@ -613,12 +668,14 @@ export default function WholesaleOrderSystem() {
                 <FilterContent
                   searchTerm={searchTerm}
                   setSearchTerm={setSearchTerm}
-                  filters={filters}
-                  setFilters={setFilters}
-                  filterOptions={filterOptions}
-                  toggleFilter={toggleFilter}
-                  clearFilters={clearFilters}
-                  getActiveFiltersCount={getActiveFiltersCount}
+                  filters={filters} // from hook
+                  // setFilters is managed by hook
+                  filterOptions={filterOptions} // from hook
+                  toggleFilter={toggleFilterHook} // from hook
+                  clearFilters={clearFiltersHook} // from hook
+                  getActiveFiltersCount={getActiveFiltersCountHook} // from hook
+                  updatePriceRange={updatePriceRange} // from hook
+                  toggleInStockOnly={toggleInStockOnly} // from hook
                 />
               </CardContent>
             </Card>
@@ -672,14 +729,14 @@ export default function WholesaleOrderSystem() {
                 <CardContent className="p-8 text-center">
                   <h3 className="text-lg font-medium mb-2">No Products Found</h3>
                   <p className="text-gray-600 mb-4">Try adjusting your search terms or filters to find products.</p>
-                  <Button onClick={clearFilters}>Clear Filters</Button>
+                  <Button onClick={clearFiltersHook}>Clear Filters</Button>
                 </CardContent>
               </Card>
             ) : (
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 lg:gap-4">
                   {paginatedGroups.map((group) => (
-                    <ProductCard key={group.reference} group={group} onAddToCart={addToCart} cart={cart} />
+                    <ProductCard key={group.reference} group={group} onAddToCart={handleAddToCart} cart={cart} />
                   ))}
                 </div>
 
@@ -722,12 +779,14 @@ function FilterContent({
   searchTerm,
   setSearchTerm,
   filters,
-  setFilters,
+  // setFilters, // Not passed directly, use specific setters from hook
   filterOptions,
   toggleFilter,
   clearFilters,
   getActiveFiltersCount,
-}: any) {
+  updatePriceRange,
+  toggleInStockOnly,
+}: FilterContentProps) {
   return (
     <div className="space-y-6">
       {/* Search - Desktop only (mobile has it in main area) */}
@@ -750,7 +809,7 @@ function FilterContent({
           <Checkbox
             id="inStock"
             checked={filters.inStockOnly}
-            onCheckedChange={(checked) => setFilters((prev: any) => ({ ...prev, inStockOnly: !!checked }))}
+            onCheckedChange={toggleInStockOnly} // Use specific handler from hook
           />
           <Label htmlFor="inStock" className="text-sm">
             In Stock Only
@@ -829,24 +888,20 @@ function FilterContent({
             <Input
               type="number"
               placeholder="Min Price"
-              value={filters.priceRange.min === 0 ? "" : filters.priceRange.min}
-              onChange={(e) =>
-                setFilters((prev: any) => ({
-                  ...prev,
-                  priceRange: { ...prev.priceRange, min: Number(e.target.value) || 0 },
-                }))
-              }
+              value={filters.priceRange.min === filterOptions.priceRange.min ? "" : filters.priceRange.min}
+              onChange={(e) => {
+                const newMin = Number(e.target.value) || filterOptions.priceRange.min;
+                updatePriceRange(newMin, filters.priceRange.max);
+              }}
             />
             <Input
               type="number"
               placeholder="Max Price"
-              value={filters.priceRange.max === 1000000 ? "" : filters.priceRange.max}
-              onChange={(e) =>
-                setFilters((prev: any) => ({
-                  ...prev,
-                  priceRange: { ...prev.priceRange, max: Number(e.target.value) || 1000000 },
-                }))
-              }
+              value={filters.priceRange.max === filterOptions.priceRange.max ? "" : filters.priceRange.max}
+              onChange={(e) => {
+                const newMax = Number(e.target.value) || filterOptions.priceRange.max;
+                updatePriceRange(filters.priceRange.min, newMax);
+              }}
             />
           </div>
           <div className="text-xs text-gray-500">
@@ -863,13 +918,13 @@ function ProductCard({
   onAddToCart,
   cart,
 }: {
-  group: ProductGroup
-  onAddToCart: (group: ProductGroup, size: string, quantity: number) => void
-  cart: CartItem[]
+  group: ProductGroup;
+  onAddToCart: (group: ProductGroup, size: string, quantity: number) => void;
+  cart: HookCartItem[];
 }) {
   const [selectedSize, setSelectedSize] = useState<string>("")
-  const [quantity, setQuantity] = useState(1)
-  const [quantityInput, setQuantityInput] = useState("1")
+  const [quantity, setQuantity] = useState(1) // Represents the actual numeric quantity
+  const [quantityInput, setQuantityInput] = useState("1") // Represents the string value in the input field
   const [imageError, setImageError] = useState(false)
 
   const getAvailableStock = (variant: Product) => {
@@ -895,20 +950,45 @@ function ProductCard({
     }
   }, [hasMultipleSizes, singleVariant])
 
+  const currentMaxStockForProductCard = selectedVariant ? getAvailableStock(selectedVariant) : getTotalStock();
+
   const handleQuantityInputChange = (value: string) => {
-    setQuantityInput(value)
-    const numValue = Number.parseInt(value) || 0
-    if (numValue > 0) {
-      setQuantity(numValue)
+    const currentMax = selectedVariant ? getAvailableStock(selectedVariant) : getTotalStock();
+    if (value === "") {
+        setQuantityInput(""); // Allow clearing for re-entry
+        setQuantity(1); // Default numeric quantity to 1 if input is cleared
+        return;
+    }
+    const num = parseInt(value, 10);
+    if (isNaN(num)) { // If not a number, don't change input, effectively ignoring non-numeric input
+        setQuantityInput(quantity.toString()); // Keep input as last valid quantity string
+        return;
+    }
+    if (num <= 0) { // If zero or negative
+        setQuantityInput("1");
+        setQuantity(1);
+    } else if (num > currentMax) {
+        setQuantityInput(currentMax.toString());
+        setQuantity(currentMax);
+    } else {
+        setQuantityInput(value); // Store the raw string value if it's a valid number in range
+        setQuantity(num);
     }
   }
 
   const handleQuantityBlur = () => {
-    const numValue = Number.parseInt(quantityInput) || 1
-    const maxQuantity = selectedVariant ? getAvailableStock(selectedVariant) : getTotalStock()
-    const finalQuantity = Math.max(1, Math.min(numValue, maxQuantity))
-    setQuantity(finalQuantity)
-    setQuantityInput(finalQuantity.toString())
+    const currentMax = selectedVariant ? getAvailableStock(selectedVariant) : getTotalStock();
+    let currentVal = parseInt(quantityInput, 10);
+
+    if (isNaN(currentVal) || quantityInput === "" || currentVal <= 0) { // If input was empty or invalid
+        currentVal = 1;
+    }
+
+    if (currentVal > currentMax) {
+        currentVal = currentMax;
+    }
+    setQuantity(currentVal);
+    setQuantityInput(currentVal.toString());
   }
 
   const handleAddToCart = () => {
@@ -918,7 +998,8 @@ function ProductCard({
     setQuantityInput("1")
   }
 
-  const maxQuantity = selectedVariant ? getAvailableStock(selectedVariant) : getTotalStock()
+  // const maxQuantity = selectedVariant ? getAvailableStock(selectedVariant) : getTotalStock();
+  // Replaced direct use of maxQuantity with currentMaxStockForProductCard where appropriate for clarity
 
   return (
     <Card className="overflow-hidden hover:shadow-lg transition-shadow">
@@ -1012,9 +1093,9 @@ function ProductCard({
           )}
 
           {/* Quantity Selection - Show when size is selected or single variant */}
-          {(selectedSize || !hasMultipleSizes) && maxQuantity > 0 && (
+          {(selectedSize || !hasMultipleSizes) && currentMaxStockForProductCard > 0 && (
             <div className="space-y-1">
-              <Label className="text-xs font-medium text-gray-900 dark:text-gray-100">Quantity:</Label>
+              <Label htmlFor={`quantity-input-${group.reference}`} className="text-xs font-medium text-gray-900 dark:text-gray-100">Quantity:</Label>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
@@ -1030,28 +1111,29 @@ function ProductCard({
                 </Button>
                 <Input
                   type="number"
+                  id={`quantity-input-${group.reference}`}
                   value={quantityInput}
                   onChange={(e) => handleQuantityInputChange(e.target.value)}
                   onBlur={handleQuantityBlur}
                   className="h-8 text-center text-sm flex-1 min-w-0 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                   min="1"
-                  max={maxQuantity}
+                  max={currentMaxStockForProductCard}
                 />
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    const newQty = Math.min(maxQuantity, quantity + 1)
+                    const newQty = Math.min(currentMaxStockForProductCard, quantity + 1)
                     setQuantity(newQty)
                     setQuantityInput(newQty.toString())
                   }}
                   className="h-8 w-8 p-0 flex-shrink-0"
-                  disabled={quantity >= maxQuantity}
+                  disabled={quantity >= currentMaxStockForProductCard}
                 >
                   <Plus className="h-3 w-3" />
                 </Button>
               </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400">Max: {maxQuantity} units</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">Max: {currentMaxStockForProductCard} units</div>
             </div>
           )}
 
@@ -1059,17 +1141,17 @@ function ProductCard({
             onClick={handleAddToCart}
             disabled={
               (hasMultipleSizes && !selectedSize) ||
-              maxQuantity === 0 ||
+              currentMaxStockForProductCard === 0 ||
               (!hasMultipleSizes && !singleVariant) ||
               quantity === 0 ||
-              quantity > maxQuantity
+              quantity > currentMaxStockForProductCard
             }
             className="w-full h-8 text-xs"
             size="sm"
           >
             {hasMultipleSizes && !selectedSize
               ? "Select Size"
-              : maxQuantity === 0
+              : currentMaxStockForProductCard === 0
                 ? "Out of Stock"
                 : `Add ${quantity} to Cart`}
           </Button>
@@ -1079,34 +1161,109 @@ function ProductCard({
   )
 }
 
-function MiniCart({
+function MiniCart({ // Props are now correctly typed via MiniCartProps
   cart,
   customerInfo,
   setCustomerInfo,
   updateQuantity,
   getTotalAmount,
   submitOrder,
-}: {
-  cart: CartItem[]
-  customerInfo: any
-  setCustomerInfo: any
-  updateQuantity: (id: number, quantity: number) => void
-  getTotalAmount: () => number
-  submitOrder: () => void
-}) {
+  clearCart,
+}: MiniCartProps) {
   const [quantityInputs, setQuantityInputs] = useState<{ [key: number]: string }>({})
+  const [isEmailInvalid, setIsEmailInvalid] = useState(false);
 
-  const handleQuantityInputChange = (productId: number, value: string) => {
-    setQuantityInputs((prev) => ({ ...prev, [productId]: value }))
+  /**
+   * Handles changes to quantity inputs within the MiniCart.
+   * @param {number} productId - The ID of the product being changed.
+   * @param {string} value - The new string value from the input.
+   * @param {number} maxStock - The maximum available stock for this item.
+   */
+  const handleMiniCartQuantityInputChange = (productId: number, value: string, maxStock: number) => {
+    if (value === "") {
+      setQuantityInputs((prev) => ({ ...prev, [productId]: "" }));
+      return;
+    }
+    const num = parseInt(value, 10);
+    if (isNaN(num)) {
+      return;
+    }
+    if (num <= 0) {
+      setQuantityInputs((prev) => ({ ...prev, [productId]: "1" }));
+    } else if (num > maxStock) {
+      setQuantityInputs((prev) => ({ ...prev, [productId]: maxStock.toString() }));
+    } else {
+      setQuantityInputs((prev) => ({ ...prev, [productId]: value }));
+    }
+  };
+
+  /**
+   * Handles the blur event for quantity inputs in the MiniCart.
+   * Validates the quantity and updates the cart.
+   * @param {number} productId - The ID of the product.
+   * @param {number} currentQuantityInCart - The current quantity of the item in the cart.
+   * @param {number} maxStock - The maximum available stock for this item.
+   */
+  const handleMiniCartQuantityBlur = (productId: number, currentQuantityInCart: number, maxStock: number) => {
+    const inputValue = quantityInputs[productId];
+    let finalQuantity: number;
+
+    if (inputValue === undefined || inputValue === null || inputValue.trim() === "") {
+      finalQuantity = Math.max(1, Math.min(currentQuantityInCart, maxStock));
+    } else {
+      const numValue = parseInt(inputValue, 10);
+      if (isNaN(numValue) || numValue <= 0) {
+        finalQuantity = 1;
+      } else if (numValue > maxStock) {
+        finalQuantity = maxStock;
+      } else {
+        finalQuantity = numValue;
+      }
+    }
+    updateQuantity(productId, finalQuantity);
+    setQuantityInputs((prev) => ({ ...prev, [productId]: finalQuantity.toString() }));
+  };
+
+  /**
+   * Handles changes to the customer email input. Validates format.
+   * @param {string} email - The current value of the email input.
+   */
+  const handleEmailChange = (email: string) => {
+    setCustomerInfo((prev: HookCustomerInfo) => ({ ...prev, email: email }));
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (email === "" || emailRegex.test(email)) {
+      setIsEmailInvalid(false);
+    } else {
+      setIsEmailInvalid(true);
+    }
+  };
+
+  /**
+   * Handles the blur event for the customer email input. Validates format.
+   * @param {string} email - The current value of the email input.
+   */
+  const handleEmailBlur = (email: string) => {
+    if (email.trim() !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setIsEmailInvalid(true);
+    } else {
+      setIsEmailInvalid(false);
+    }
+  };
+
+  /**
+   * Wraps the submitOrder call to include local validation like email format check.
+   */
+  const localSubmitOrder = () => {
+    if (isEmailInvalid) {
+       // This assumes `setNotification` is passed down or available via context
+       // As it's not directly passed, this example relies on visual cue from isEmailInvalid
+       // Or, you can pass setNotification to MiniCart if preferred.
+       alert("Invalid email format. Please correct it before submitting."); // Placeholder if setNotification not available
+       return;
+    }
+    submitOrder();
   }
 
-  const handleQuantityBlur = (productId: number, maxStock: number) => {
-    const inputValue = quantityInputs[productId]
-    const numValue = Number.parseInt(inputValue) || 1
-    const finalQuantity = Math.max(1, Math.min(numValue, maxStock))
-    updateQuantity(productId, finalQuantity)
-    setQuantityInputs((prev) => ({ ...prev, [productId]: finalQuantity.toString() }))
-  }
 
   return (
     <div className="h-full max-h-[calc(100vh-8rem)] flex flex-col">
@@ -1140,11 +1297,11 @@ function MiniCart({
                         <Input
                           type="number"
                           value={quantityInputs[item.productId] ?? item.quantity.toString()}
-                          onChange={(e) => handleQuantityInputChange(item.productId, e.target.value)}
-                          onBlur={() => handleQuantityBlur(item.productId, item.stock)}
+                          onChange={(e) => handleMiniCartQuantityInputChange(item.productId, e.target.value, item.stock)}
+                          onBlur={() => handleMiniCartQuantityBlur(item.productId, item.quantity, item.stock)}
                           className="h-8 w-16 text-center text-sm"
-                          min="1"
-                          max={item.stock}
+                          min="1" // HTML5 min attribute
+                          max={item.stock} // HTML5 max attribute
                         />
                         <Button
                           size="sm"
@@ -1179,34 +1336,36 @@ function MiniCart({
             <Input
               placeholder="Full Name *"
               value={customerInfo.name}
-              onChange={(e) => setCustomerInfo((prev: any) => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => setCustomerInfo((prev) => ({ ...prev, name: e.target.value }))}
               className="h-9 text-sm"
             />
             <Input
               placeholder="Email *"
               type="email"
               value={customerInfo.email}
-              onChange={(e) => setCustomerInfo((prev: any) => ({ ...prev, email: e.target.value }))}
-              className="h-9 text-sm"
+              onChange={(e) => handleEmailChange(e.target.value)}
+              onBlur={(e) => handleEmailBlur(e.target.value)}
+              className={`h-9 text-sm ${isEmailInvalid ? 'border-red-500' : ''}`}
             />
+            {isEmailInvalid && <p className="text-xs text-red-500">Invalid email format.</p>}
             <Input
               placeholder="Company Name"
               value={customerInfo.company}
-              onChange={(e) => setCustomerInfo((prev: any) => ({ ...prev, company: e.target.value }))}
+              onChange={(e) => setCustomerInfo((prev) => ({ ...prev, company: e.target.value }))}
               className="h-9 text-sm"
             />
             <Input
               placeholder="Phone Number"
               value={customerInfo.phone}
-              onChange={(e) => setCustomerInfo((prev: any) => ({ ...prev, phone: e.target.value }))}
+              onChange={(e) => setCustomerInfo((prev) => ({ ...prev, phone: e.target.value }))}
               className="h-9 text-sm"
             />
           </div>
 
           <Button
-            onClick={submitOrder}
+            onClick={localSubmitOrder} // Use local wrapper for submit
             className="w-full h-10"
-            disabled={!customerInfo.name || !customerInfo.email || cart.length === 0}
+            disabled={!customerInfo.name || !customerInfo.email || cart.length === 0 || isEmailInvalid}
           >
             Submit Order
           </Button>
